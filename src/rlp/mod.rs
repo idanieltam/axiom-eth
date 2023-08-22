@@ -132,7 +132,7 @@ pub struct RlpFieldTraceWitness<'v, F: ScalarField> {
 
 #[derive(Clone, Debug)]
 pub struct RlpFieldTrace<'v, F: ScalarField> {
-    pub prefix: AssignedValue<'v, F>, // value of the prefix
+    pub prefix: AssignedValue<'v, F>, // value of the prefix //in hex?
     pub prefix_len: AssignedValue<'v, F>,
     pub len_trace: RlcTrace<'v, F>,
     pub field_trace: RlcTrace<'v, F>,

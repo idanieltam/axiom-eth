@@ -30,12 +30,12 @@ mod tests;
 #[derive(Clone, Debug)]
 pub struct LeafTrace<'v, F: Field> {
     key_path: RlpFieldTrace<'v, F>,
-    value: RlpFieldTrace<'v, F>,
+    value: RlpFieldTrace<'v, F>, // why is this a field trace?
     leaf_hash_rlc: RlcVarLen<'v, F>,
 }
 
 #[derive(Clone, Debug)]
-pub struct LeafTraceWitness<'v, F: Field> {
+pub struct LeafTraceWitness<'v, F: Field> { // what is a trace witness?
     pub rlp_witness: RlpArrayTraceWitness<'v, F>,
     pub leaf_hash_query_idx: usize,
     pub max_leaf_bytes: usize,
@@ -90,7 +90,7 @@ pub struct MPTKeyFragment<'v, F: Field> {
 }
 
 #[derive(Clone, Debug)]
-pub struct MPTFixedKeyProof<'v, F: Field> {
+pub struct MPTFixedKeyProof<'v, F: Field> { // what is a fixed key proof?
     // claim specification: (key, value)
     pub key_bytes: AssignedBytes<'v, F>,
     pub value_bytes: AssignedBytes<'v, F>,
@@ -128,7 +128,7 @@ pub struct MPTFixedKeyProofWitness<'v, F: Field> {
 pub struct MPTVarKeyProof<'v, F: Field> {
     // claim specification
     key_bytes: AssignedBytes<'v, F>,
-    key_byte_len: AssignedValue<'v, F>,
+    key_byte_len: AssignedValue<'v, F>, // <= this is different from the fixed key proof
     value_bytes: AssignedBytes<'v, F>,
     value_byte_len: AssignedValue<'v, F>,
     root_hash_bytes: AssignedBytes<'v, F>,
