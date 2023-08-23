@@ -1,0 +1,4 @@
+degree,total_advice,num_rlc_columns,num_advice,num_lookup,num_fixed,proof_time,verify_time
+15,101,2,[19, 11, 0],[1, 1, 0],1,18.29s,49.412083ms
+16,65,1,[10, 6, 0],[1, 1, 0],1,23.32s,116.69625ms
+17,42,1,[5, 3, 0],[1, 1, 0],1,30.36s,131.586708ms

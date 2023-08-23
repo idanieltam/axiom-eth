@@ -18,7 +18,9 @@ use crate::{
     util::EthConfigParams,
 };
 use ark_std::{end_timer, start_timer};
+use ark_std::sync::Arc;
 use ethers_core::utils::keccak256;
+use eth_trie::*;
 use halo2_base::{
     halo2_proofs::plonk::{create_proof, keygen_pk, keygen_vk, verify_proof},
     utils::fs::gen_srs,
@@ -101,7 +103,9 @@ fn mpt_input(path: impl AsRef<Path>, slot_is_empty: bool, max_depth: usize) -> M
     let pf_strs: Vec<String> = serde_json::from_value(storage_pf["proof"].clone()).unwrap();
 
     let value_max_byte_len = 33;
-    let proof = pf_strs.into_iter().map(|pf| from_hex(&pf[2..])).collect();
+    let proof:Vec<Vec<u8>> = pf_strs.into_iter().map(|pf| from_hex(&pf[2..])).collect();
+    println!("Proof_lens:\n {:?}", &proof.len());
+    println!("Value_lens:\n {:?}", &value.len());
 
     MPTFixedKeyInput {
         path: H256(path),
@@ -114,6 +118,79 @@ fn mpt_input(path: impl AsRef<Path>, slot_is_empty: bool, max_depth: usize) -> M
     }
 }
 
+
+fn mpt_receipt_input(slot_is_empty: bool, max_depth: usize) -> MPTFixedKeyInput {
+    let receipt_string: Vec<String> =
+        serde_json::from_reader(File::open("scripts/input_gen/block_receipts.json").unwrap())
+            .unwrap();
+    let values: Vec<_> = receipt_string
+        .iter()
+        .map(|receipt| hex::decode(receipt.strip_prefix("0x").unwrap()).unwrap())
+        .collect();
+    // for (i, v) in values.iter().enumerate() {
+    //     println!("{},{}", i, v.len());
+    // }
+    // println!("{:?}", hex::encode(values[110].clone()));
+
+    let keys: Vec<_> = receipt_string
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let k = rlp::encode(&i);
+            k.to_vec()
+        })
+        .collect();
+    
+    let mem_db = Arc::new(MemoryDB::new(true));
+
+    let mut trie = EthTrie::new(mem_db.clone());
+   
+    for (k, v) in keys.iter().zip(values.iter()) {
+        trie.insert(k, v).unwrap();
+
+        let value = trie.get(k).unwrap();
+        assert_eq!(Some(v.to_vec()), value);
+    }
+
+    let root_hash = trie.root_hash().unwrap();
+    assert_eq!(
+        hex::encode(root_hash.as_bytes()),
+        "c734ecb1a3f06705bc214b92f8e09f001c225d8e41d5fe521eb47bc569b70f0d"
+    );
+
+    let index = 2;
+    let desired_key = keys[index].clone();
+    let path = keccak256(&desired_key);
+    //let desired_key_arr: [u8] = desired_key.clone().try_into().unwrap();
+    let desired_value = trie.get(&desired_key).unwrap();
+    let value = ::rlp::encode(&values[index]).to_vec();
+    let proof = trie.get_proof(&desired_key).unwrap();
+    let proof_str: Vec<_> = proof.clone().iter().map(|p| hex::encode(p)).collect();
+    println!("Key:\n {:x?}", desired_key);
+    println!("Key_Vec:\n {:x?}", keys);
+    //println!("Value:\n {:x?}", hex::encode(values[index].clone()));
+    println!("Value:\n {:x?}", value);
+    println!("Proof:\n {:?}", proof_str);
+    println!("Proof_lens:\n {:?}", &proof.len());
+
+    let verify = trie.verify_proof(root_hash, &desired_key, proof.clone());
+    assert!(verify.is_ok());
+    let value_max_byte_len = 1000;
+    let root_hash_str = "c734ecb1a3f06705bc214b92f8e09f001c225d8e41d5fe521eb47bc569b70f0d".to_string();
+    
+    MPTFixedKeyInput {
+        path: H256(path),
+        //value: desired_value.unwrap(),
+        value,
+        root_hash: H256::from_slice(&from_hex(&root_hash_str[0..])),
+        proof,
+        value_max_byte_len,
+        max_depth,
+        slot_is_empty,
+    }
+}
+
+
 fn default_input() -> MPTFixedKeyInput {
     mpt_input("scripts/input_gen/default_storage_pf.json", false, 8)
 }
@@ -122,12 +199,29 @@ fn default_input() -> MPTFixedKeyInput {
 pub fn test_mock_mpt_inclusion_fixed() {
     let params = EthConfigParams::from_path("configs/tests/mpt.json");
     // std::env::set_var("ETH_CONFIG_PARAMS", serde_json::to_string(&params).unwrap());
+
     let k = params.degree;
     let input = mpt_input("scripts/input_gen/default_storage_pf.json", false, 5); // depth = max_depth
     let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 
     let input = mpt_input("scripts/input_gen/default_storage_pf.json", false, 6); // depth != max_depth
+    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
+    
+}
+
+#[test]
+pub fn test_mock_receipt_mpt_inclusion_fixed() {
+    let params = EthConfigParams::from_path("configs/tests/mpt.json");
+    // std::env::set_var("ETH_CONFIG_PARAMS", serde_json::to_string(&params).unwrap());
+    let k = params.degree;
+    let input = mpt_receipt_input(false, 3); // depth = max_depth
+    
+    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
+
+    let input = mpt_receipt_input(false, 4); // depth != max_depth
     let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 }

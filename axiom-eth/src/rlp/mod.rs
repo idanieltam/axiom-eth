@@ -259,6 +259,8 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         prefix: AssignedValue<F>,
     ) -> RlpArrayPrefixParsed<F> {
         // is valid
+        println!("prefix:\n {:?}", &prefix);
+
         self.range.check_less_than(ctx, Constant(self.field_element(191)), prefix, 8);
 
         let is_big = self.range.is_less_than(ctx, Constant(self.field_element(247)), prefix, 8);
@@ -306,6 +308,7 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         rlp_field: Vec<AssignedValue<F>>,
         max_field_len: usize,
     ) -> RlpFieldTraceWitness<F> {
+
         let max_len_len = max_rlp_len_len(max_field_len);
         debug_assert_eq!(rlp_field.len(), 1 + max_len_len + max_field_len);
 
@@ -426,7 +429,12 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         is_variable_len: bool,
     ) -> RlpArrayTraceWitness<F> {
         let max_rlp_array_len = rlp_array.len();
+
+        println!("max_rlp_array_len:\n {:?}", &max_rlp_array_len);
+
         let max_len_len = max_rlp_len_len(max_rlp_array_len);
+
+        println!("max_len_len:\n {:?}", &max_len_len);
 
         // Witness consists of
         // * prefix_parsed
@@ -453,6 +461,9 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         let prefix_parsed = self.parse_rlp_array_prefix(ctx, prefix);
 
         let len_len = prefix_parsed.len_len;
+
+        println!("len_len:\n {:?}", &len_len.value());
+        
         self.range.check_less_than_safe(ctx, len_len, (max_len_len + 1) as u64);
 
         let (len_cells, len_byte_val) = self.parse_rlp_len(ctx, &rlp_array, len_len, max_len_len);

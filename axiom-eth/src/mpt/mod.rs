@@ -95,7 +95,7 @@ pub type AssignedNibbles<F> = Vec<AssignedValue<F>>;
 
 #[derive(Clone, Debug)]
 pub struct MPTNode<F: Field> {
-    pub rlp_bytes: AssignedBytes<F>,
+    pub rlp_bytes: AssignedBytes<F>, // byte representation of the rlp encoded node
     /// 0 = branch, 1 = extension
     pub node_type: AssignedValue<F>,
 }
@@ -257,7 +257,7 @@ pub struct MPTVarKeyProof<F: Field> {
 */
 
 pub fn max_leaf_lens(max_key_bytes: usize, max_value_bytes: usize) -> (Vec<usize>, usize) {
-    let max_encoded_path_bytes = max_key_bytes + 1;
+    let max_encoded_path_bytes = max_key_bytes + 1; //33
     let max_encoded_path_rlp_bytes =
         1 + max_rlp_len_len(max_encoded_path_bytes) + max_encoded_path_bytes;
     let max_value_rlp_bytes = 1 + max_rlp_len_len(max_value_bytes) + max_value_bytes;
@@ -397,6 +397,11 @@ impl<'chip, F: Field> EthChip<'chip, F> {
     ) -> LeafTraceWitness<F> {
         let (max_field_bytes, max_leaf_bytes) = max_leaf_lens(max_key_bytes, max_value_bytes);
         assert_eq!(leaf_bytes.len(), max_leaf_bytes);
+
+        println!("max_field_bytes:\n {:?}", &max_field_bytes);
+        println!("max_leaf_bytes:\n {:?}", &max_leaf_bytes);
+        println!("leaf_bytes_lens:\n {:?}", &leaf_bytes.len());
+        println!("leaf_bytes[0]:\n {:?}", &leaf_bytes[0]);
 
         let rlp_witness =
             self.rlp.decompose_rlp_array_phase0(ctx, leaf_bytes, &max_field_bytes, false);
@@ -562,6 +567,9 @@ impl<'chip, F: Field> EthChip<'chip, F> {
          * RLP Extension for select(dummy_extension[idx], nodes[idx], node_types[idx])
          * RLP Branch    for select(nodes[idx], dummy_branch[idx], node_types[idx])
          */
+
+        println!("key_byte_lens:\n {:?}", &key_byte_len);
+        println!("value_max_byte_len:\n {:?}", &value_max_byte_len);
         let leaf_parsed =
             self.parse_leaf_phase0(ctx, keccak, proof.leaf_bytes, key_byte_len, value_max_byte_len);
 

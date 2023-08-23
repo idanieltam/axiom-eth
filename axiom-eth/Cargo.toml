@@ -37,6 +37,7 @@ ethers-core = { version = "=2.0.6" }
 rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
 rand = "0.8"
 rand_chacha = "0.3.1"
+eth_trie = "0.1.0"
 
 # aggregation 
 snark-verifier = { git = "https://github.com/axiom-crypto/snark-verifier.git", tag = "v0.1.1", default-features = false, features = ["loader_halo2"], optional = true }
