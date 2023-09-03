@@ -225,17 +225,19 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         ctx: &mut Context<F>,
         prefix: AssignedValue<F>,
     ) -> RlpFieldPrefixParsed<F> {
+        // is not small integer, string with length < 55
         let is_not_literal =
             self.range.is_less_than(ctx, Constant(self.field_element(127)), prefix, 8);
+        // is string with length < 56
         let is_len_or_literal =
             self.range.is_less_than(ctx, prefix, Constant(self.field_element(184)), 8);
-        // is valid
+        // is valid, string with length > 55 but not a list
         self.range.check_less_than(ctx, prefix, Constant(self.field_element(192)), 8);
 
-        let field_len = self.gate().sub(ctx, prefix, Constant(self.field_element(128)));
+        let field_len = self.gate().sub(ctx, prefix, Constant(self.field_element(128))); //* why not 126?
         let len_len = self.gate().sub(ctx, prefix, Constant(self.field_element(183)));
 
-        let is_big = self.gate().not(ctx, is_len_or_literal);
+        let is_big = self.gate().not(ctx, is_len_or_literal); //string more than 55 bytes long
 
         // length of the next RLP field
         let next_len = self.gate().select(ctx, len_len, field_len, is_big);
@@ -285,11 +287,12 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         len_len: AssignedValue<F>,
         max_len_len: usize,
     ) -> (Vec<AssignedValue<F>>, AssignedValue<F>) {
+        // the length of the payload
         let len_cells = witness_subarray(
             ctx,
             rlp_cells,
             &F::one(), // the 0th index is the prefix byte, and is skipped
-            len_len.value(),
+            len_len.value(), //the length in bytes of the length of the payload
             max_len_len,
         );
         let len_val = evaluate_byte_array(ctx, self.gate(), &len_cells, len_len);
@@ -420,7 +423,7 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
     /// * Otherwise if `is_variable_len = true`, then `max_field_lens.len()` is assumed to be the maximum number of items of any list represented by this RLP encoding.
     /// * `max_field_lens` is the maximum length of each field in the list.
     ///
-    /// In order for the circuit to pass, the excess witness values in `rlp_array` beyond the actual RLP sequence should all be `0`s.
+    /// In order for the circuit to constrain_rlc_concat_var, the excess witness values in `rlp_array` beyond the actual RLP sequence should all be `0`s.
     pub fn decompose_rlp_array_phase0(
         &self,
         ctx: &mut Context<F>, // context for GateChip
@@ -435,7 +438,7 @@ impl<'range, F: ScalarField> RlpChip<'range, F> {
         let max_len_len = max_rlp_len_len(max_rlp_array_len);
 
         println!("max_len_len:\n {:?}", &max_len_len);
-
+        // RLP encoding for list > 55 bytes long, prefix + len_len + len + field_len + field
         // Witness consists of
         // * prefix_parsed
         // * len_rlc
