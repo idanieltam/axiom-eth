@@ -36,7 +36,7 @@ use std::{
 };
 use test_log::test;
 
-fn test_mpt_circuit<F: Field>(
+fn test_mpt_fixed_key_circuit<F: Field>(
     k: u32,
     mut builder: RlcThreadBuilder<F>,
     inputs: MPTFixedKeyInput,
@@ -71,7 +71,43 @@ fn test_mpt_circuit<F: Field>(
     }
     circuit
 }
+fn test_mpt_var_key_circuit<F: Field>(
+    k: u32,
+    mut builder: RlcThreadBuilder<F>,
+    inputs: MPTVarKeyInput,
 
+) -> KeccakCircuitBuilder<F, impl FnSynthesize<F>> {
+    let prover = builder.witness_gen_only();
+    let range = RangeChip::default(8);
+    let mut keccak = KeccakChip::default();
+    let mpt = EthChip::new(RlpChip::new(&range, None), None);
+    let ctx = builder.gate_builder.main(0);
+    let mpt_proof = inputs.clone().assign(ctx);
+    //let key_actual_byte_len = mpt_proof.key_actual_byte_len;
+    let mpt_witness = mpt.parse_mpt_inclusion_var_key_phase0(ctx, &mut keccak, mpt_proof, inputs.key_max_byte_len, inputs.value_max_byte_len,inputs.max_depth);
+
+    let circuit = KeccakCircuitBuilder::new(
+        builder,
+        RefCell::new(keccak),
+        range,
+        None,
+        move |builder: &mut RlcThreadBuilder<F>,
+              rlp: RlpChip<F>,
+              keccak_rlcs: (FixedLenRLCs<F>, VarLenRLCs<F>)| {
+            // hard to tell rust that &range lives long enough, so just remake the MPTChip
+            let mut mpt = EthChip::new(rlp, None);
+            mpt.keccak_rlcs = Some(keccak_rlcs);
+            let (ctx_gate, ctx_rlc) = builder.rlc_ctx_pair();
+            mpt.parse_mpt_inclusion_var_key_phase1((ctx_gate, ctx_rlc), mpt_witness);
+        },
+    );
+    if !prover {
+        let unusable_rows =
+            var("UNUSABLE_ROWS").unwrap_or_else(|_| "109".to_string()).parse().unwrap();
+        circuit.config(k as usize, Some(unusable_rows));
+    }
+    circuit
+}
 fn from_hex(s: &str) -> Vec<u8> {
     let s = if s.len() % 2 == 1 { format!("0{s}") } else { s.to_string() };
     Vec::from_hex(s).unwrap()
@@ -92,17 +128,23 @@ fn mpt_input(path: impl AsRef<Path>, slot_is_empty: bool, max_depth: usize) -> M
 
     let key_bytes_str: String = serde_json::from_value(storage_pf["key"].clone()).unwrap();
     let path = keccak256(from_hex(&key_bytes_str));
+    //let path = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3];
     let value_bytes_str: String = serde_json::from_value(storage_pf["value"].clone()).unwrap();
     let value_bytes_str = if value_bytes_str.len() % 2 == 1 {
         format!("0{}", &value_bytes_str[2..])
     } else {
         value_bytes_str[2..].to_string()
     };
+
+    println!("key_bytes_str:\n {:x?}", &key_bytes_str);
+    println!("path:\n {:x?}", &path);
+    println!("value_bytes_str:\n {:x?}", &value_bytes_str);
+
     let value = ::rlp::encode(&from_hex(&value_bytes_str)).to_vec();
     let root_hash_str: String = serde_json::from_value(pf["storageHash"].clone()).unwrap();
     let pf_strs: Vec<String> = serde_json::from_value(storage_pf["proof"].clone()).unwrap();
 
-    let value_max_byte_len = 33;
+    let value_max_byte_len = 500;
     let proof:Vec<Vec<u8>> = pf_strs.into_iter().map(|pf| from_hex(&pf[2..])).collect();
     println!("Proof_lens:\n {:?}", &proof.len());
     println!("Value_lens:\n {:?}", &value.len());
@@ -118,19 +160,15 @@ fn mpt_input(path: impl AsRef<Path>, slot_is_empty: bool, max_depth: usize) -> M
     }
 }
 
-
-fn mpt_receipt_input(slot_is_empty: bool, max_depth: usize) -> MPTFixedKeyInput {
+fn mpt_receipt_input(slot_is_empty: bool, max_depth: usize) -> MPTVarKeyInput {
     let receipt_string: Vec<String> =
         serde_json::from_reader(File::open("scripts/input_gen/block_receipts.json").unwrap())
             .unwrap();
+
     let values: Vec<_> = receipt_string
         .iter()
         .map(|receipt| hex::decode(receipt.strip_prefix("0x").unwrap()).unwrap())
         .collect();
-    // for (i, v) in values.iter().enumerate() {
-    //     println!("{},{}", i, v.len());
-    // }
-    // println!("{:?}", hex::encode(values[110].clone()));
 
     let keys: Vec<_> = receipt_string
         .iter()
@@ -140,7 +178,7 @@ fn mpt_receipt_input(slot_is_empty: bool, max_depth: usize) -> MPTFixedKeyInput 
             k.to_vec()
         })
         .collect();
-    
+
     let mem_db = Arc::new(MemoryDB::new(true));
 
     let mut trie = EthTrie::new(mem_db.clone());
@@ -158,38 +196,42 @@ fn mpt_receipt_input(slot_is_empty: bool, max_depth: usize) -> MPTFixedKeyInput 
         "c734ecb1a3f06705bc214b92f8e09f001c225d8e41d5fe521eb47bc569b70f0d"
     );
 
-    let index = 2;
-    let desired_key = keys[index].clone();
-    let path = keccak256(&desired_key);
-    //let desired_key_arr: [u8] = desired_key.clone().try_into().unwrap();
-    let desired_value = trie.get(&desired_key).unwrap();
+    let index = 1;
+    let mut desired_key = keys[index].clone();
+
+    //let path = keccak256(&desired_key);
+    //desired_key.resize(32, 0);
+    //println!("desired_key:\n {:?}", &desired_key.len());
+    //println!("desired_key:\n {:?}", &desired_key);
+    //let desired_key_arr: [u8;32] = desired_key.clone().try_into().unwrap();
+    //let desired_value = trie.get(&desired_key).unwrap();
+
     let value = ::rlp::encode(&values[index]).to_vec();
+    //let value = values[index].clone();
     let proof = trie.get_proof(&desired_key).unwrap();
     let proof_str: Vec<_> = proof.clone().iter().map(|p| hex::encode(p)).collect();
     println!("Key:\n {:x?}", desired_key);
-    println!("Key_Vec:\n {:x?}", keys);
     //println!("Value:\n {:x?}", hex::encode(values[index].clone()));
-    println!("Value:\n {:x?}", value);
+    //println!("Value:\n {:x?}", value);
     println!("Proof:\n {:?}", proof_str);
     println!("Proof_lens:\n {:?}", &proof.len());
 
     let verify = trie.verify_proof(root_hash, &desired_key, proof.clone());
     assert!(verify.is_ok());
-    let value_max_byte_len = 1000;
+    let value_max_byte_len = 500;
     let root_hash_str = "c734ecb1a3f06705bc214b92f8e09f001c225d8e41d5fe521eb47bc569b70f0d".to_string();
-    
-    MPTFixedKeyInput {
-        path: H256(path),
-        //value: desired_value.unwrap(),
+
+    MPTVarKeyInput {
+        path: desired_key,
         value,
         root_hash: H256::from_slice(&from_hex(&root_hash_str[0..])),
         proof,
         value_max_byte_len,
+        key_max_byte_len: 32,
         max_depth,
         slot_is_empty,
     }
 }
-
 
 fn default_input() -> MPTFixedKeyInput {
     mpt_input("scripts/input_gen/default_storage_pf.json", false, 8)
@@ -202,15 +244,16 @@ pub fn test_mock_mpt_inclusion_fixed() {
 
     let k = params.degree;
     let input = mpt_input("scripts/input_gen/default_storage_pf.json", false, 5); // depth = max_depth
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 
     let input = mpt_input("scripts/input_gen/default_storage_pf.json", false, 6); // depth != max_depth
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
     
 }
 
+/*
 #[test]
 pub fn test_mock_receipt_mpt_inclusion_fixed() {
     let params = EthConfigParams::from_path("configs/tests/mpt.json");
@@ -218,11 +261,26 @@ pub fn test_mock_receipt_mpt_inclusion_fixed() {
     let k = params.degree;
     let input = mpt_receipt_input(false, 3); // depth = max_depth
     
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 
     let input = mpt_receipt_input(false, 4); // depth != max_depth
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
+}
+*/
+#[test]
+pub fn test_mock_receipt_mpt_inclusion_var() {
+    let params = EthConfigParams::from_path("configs/tests/mpt.json");
+    // std::env::set_var("ETH_CONFIG_PARAMS", serde_json::to_string(&params).unwrap());
+    let k = params.degree;
+    let input = mpt_receipt_input(false, 3); // depth = max_depth
+
+    let circuit = test_mpt_var_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
+
+    let input = mpt_receipt_input(false, 4); // depth != max_depth
+    let circuit = test_mpt_var_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 }
 
@@ -231,7 +289,7 @@ pub fn test_mpt_noninclusion_branch_fixed() {
     let params = EthConfigParams::from_path("configs/tests/mpt.json");
     let k = params.degree;
     let input = mpt_input("scripts/input_gen/noninclusion_branch_pf.json", true, 5);
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 }
 
@@ -240,7 +298,7 @@ pub fn test_mpt_noninclusion_extension_fixed() {
     let params = EthConfigParams::from_path("configs/tests/mpt.json");
     let k = params.degree;
     let input = mpt_input("scripts/input_gen/noninclusion_extension_pf.json", true, 6); // require depth < max_depth
-    let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
+    let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::mock(), input);
     MockProver::run(k, &circuit, vec![]).unwrap().assert_satisfied();
 }
 
@@ -262,7 +320,7 @@ fn bench_mpt_inclusion_fixed() -> Result<(), Box<dyn std::error::Error>> {
         set_var("KECCAK_ROWS", bench_params.keccak_rows_per_round.to_string());
         let k = bench_params.degree;
         let params = gen_srs(k);
-        let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::keygen(), default_input());
+        let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::keygen(), default_input());
         // circuit.config(k as usize, Some(bench_params.unusable_rows));
         let vk = keygen_vk(&params, &circuit)?;
         let pk = keygen_pk(&params, vk, &circuit)?;
@@ -270,7 +328,7 @@ fn bench_mpt_inclusion_fixed() -> Result<(), Box<dyn std::error::Error>> {
 
         // create a proof
         let proof_time = start_timer!(|| "Create proof SHPLONK");
-        let circuit = test_mpt_circuit(k, RlcThreadBuilder::<Fr>::prover(), default_input());
+        let circuit = test_mpt_fixed_key_circuit(k, RlcThreadBuilder::<Fr>::prover(), default_input());
         assert_eq!(circuit.keccak.borrow().num_rows_per_round, bench_params.keccak_rows_per_round);
         *circuit.break_points.borrow_mut() = break_points;
         let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
